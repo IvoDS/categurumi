@@ -19,6 +19,8 @@ class CreationForm
                     ->columnSpanFull(),
                 FileUpload::make('image_path')
                     ->image()
+                    ->disk('public')
+                    ->directory('creations')
                     ->required(),
             ]);
     }

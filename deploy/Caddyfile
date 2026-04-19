@@ -1,7 +1,7 @@
 categurumi.ivandestefani.it {
     root * /var/www/categurumi/public
     file_server
-    php_fastcgi unix//run/php/php-fpm.sock
+    php_fastcgi unix//run/php/php8.4-fpm.sock
 
     # Security headers
     header {
