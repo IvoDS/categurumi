@@ -4,9 +4,7 @@
 set -e # Stop on any error
 
 # 1. Determine directories
-# Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-# The project root is one level up from the deploy folder
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 cd "$PROJECT_ROOT"
@@ -17,7 +15,7 @@ if [ -f "$SCRIPT_DIR/deploy.env" ]; then
 elif [ -f "$PROJECT_ROOT/deploy.env" ]; then
     export $(grep -v '^#' "$PROJECT_ROOT/deploy.env" | xargs)
 else
-    echo "Error: deploy.env file not found in $SCRIPT_DIR or $PROJECT_ROOT"
+    echo "Error: deploy.env file not found."
     exit 1
 fi
 
@@ -28,7 +26,6 @@ if [ -z "$DEPLOY_USER" ] || [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_PATH" ]; then
 fi
 
 echo "--- Starting Deployment [CATEGURUMI_SYNC] ---"
-echo "Project Root: $PROJECT_ROOT"
 
 # Step 1: Build Frontend Assets locally
 echo "Step 1: Building Frontend Assets..."
@@ -37,7 +34,6 @@ npm run build
 
 # Step 2: Sync files to server
 echo "Step 2: Uploading to $DEPLOY_HOST..."
-# Sync from PROJECT_ROOT to ensure everything is uploaded
 rsync -avz --delete \
     --exclude 'node_modules' \
     --exclude 'storage/framework/cache/data/*' \
@@ -58,29 +54,44 @@ ssh $DEPLOY_USER@$DEPLOY_HOST "bash -s" << EOF
     set -e
     cd $DEPLOY_PATH
     
-    # Verify artisan exists
-    if [ ! -f "artisan" ]; then
-        echo "Error: artisan file not found in \$(pwd). Files might not have been uploaded correctly."
-        ls -la
-        exit 1
-    fi
+    # 3.1 Force create all required directories
+    echo "Ensuring directory structure..."
+    mkdir -p storage/framework/{sessions,views,cache}
+    mkdir -p storage/app/public/creations
+    mkdir -p storage/app/livewire-tmp
+    mkdir -p bootstrap/cache
 
+    # 3.2 Install PHP dependencies
     echo "Installing PHP dependencies..."
     composer install --no-dev --optimize-autoloader
     
-    echo "Running migrations..."
+    # 3.3 Database and Storage
+    echo "Running migrations and linking storage..."
     php artisan migrate --force
+    php artisan storage:link --force || true
     
-    echo "Linking storage..."
-    # Storage link might already exist, so we use || true
-    php artisan storage:link || true
+    # 3.4 Definitive Permission Reset (The "Once and For All" Fix)
+    echo "Applying definitive permission fix..."
+    # Set ownership to web server user
+    chown -R www-data:www-data $DEPLOY_PATH
+    # Folders: 775 (owner/group can write)
+    find $DEPLOY_PATH -type d -exec chmod 775 {} \;
+    # Files: 664 (owner/group can write)
+    find $DEPLOY_PATH -type f -exec chmod 664 {} \;
+    # Ensure Caddy/PHP-FPM can enter all folders
+    chmod -R 775 storage bootstrap/cache database
     
-    echo "Caching optimization..."
-    php artisan config:cache
-    php artisan route:cache
-    php artisan view:cache
+    # 3.5 Optimize Laravel
+    echo "Optimizing Laravel..."
+    sudo -u www-data php artisan config:cache
+    sudo -u www-data php artisan route:cache
+    sudo -u www-data php artisan view:cache
+    
+    # 3.6 Restart PHP-FPM to clear any stale file handles
+    echo "Restarting PHP service..."
+    systemctl restart php8.4-fpm
 EOF
 
 echo "--- Deployment Successful ---"
 echo "REMINDER: Ensure your .env file is present on the server at $DEPLOY_PATH/.env"
-echo "REMINDER: If you changed the Caddyfile, run: sudo systemctl reload caddy"
+echo "REMINDER: If you changed the Caddyfile, run: sudo cp $DEPLOY_PATH/deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy"
