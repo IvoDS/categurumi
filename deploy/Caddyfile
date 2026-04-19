@@ -1,0 +1,6 @@
+initializer.ivandestefani.it {
+    tls /etc/caddy/ssl/ivandestefani.crt /etc/caddy/ssl/ivandestefani.key
+
+    # Reverse proxy everything to the Node.js backend
+    reverse_proxy localhost:3001
+}
