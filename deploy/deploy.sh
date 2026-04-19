@@ -1,26 +1,20 @@
 #!/bin/bash
 
-# Deployment script for Initializer System [IDS_CYBER_INDUSTRIAL]
+# Deployment script for CateGurumi (Laravel + React)
 
 # Load environment variables
 if [ -f deploy.env ]; then
     export $(grep -v '^#' deploy.env | xargs)
 else
-    echo "Error: deploy.env file not found."
+    echo "Warning: deploy.env file not found. Please ensure DEPLOY_USER, DEPLOY_HOST, and DEPLOY_PATH are set."
     exit 1
 fi
 
-# Check for required variables
-if [ -z "$DEPLOY_USER" ] || [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_PATH" ]; then
-    echo "Error: Missing deployment variables in deploy.env."
-    exit 1
-fi
+echo "--- Starting Deployment [CATEGURUMI_SYNC] ---"
 
-echo "--- Starting Deployment [INITIALIZER_BOOT_SEQUENCE] ---"
-
-# Step 1: Build Frontend
-echo "Step 1: Building Frontend..."
-cd ../initializer-fe
+# Step 1: Build Frontend Assets locally
+echo "Step 1: Building Frontend Assets..."
+npm install
 npm run build
 
 if [ $? -ne 0 ]; then
@@ -28,21 +22,20 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Step 2: Prepare Backend 'public' folder
-echo "Step 2: Preparing Backend public folder..."
-rm -rf ../initializer-be/public
-mkdir -p ../initializer-be/public
-cp -r dist/* ../initializer-be/public/
-
-# Step 3: Upload Backend to server
-echo "Step 3: Uploading Backend to $DEPLOY_HOST..."
-cd ../initializer-be
-# Exclude node_modules, logs, and local sqlite database to keep upload clean
+# Step 2: Sync files to server
+echo "Step 2: Uploading to $DEPLOY_HOST..."
+# Syncing all files while excluding local dev files and storage contents
 rsync -avz --delete \
     --exclude 'node_modules' \
-    --exclude 'logs' \
-    --exclude '*.sqlite' \
+    --exclude 'storage/framework/cache/data/*' \
+    --exclude 'storage/framework/sessions/*' \
+    --exclude 'storage/framework/views/*' \
+    --exclude 'storage/logs/*' \
+    --exclude 'storage/app/public/*' \
     --exclude '.env' \
+    --exclude '.git' \
+    --exclude '.idea' \
+    --exclude 'database/*.sqlite' \
     ./ $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH
 
 if [ $? -ne 0 ]; then
@@ -50,35 +43,32 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Step 4: Remote Setup (Install dependencies & Restart PM2)
-echo "Step 4: Running remote setup..."
+# Step 3: Remote Post-Deployment Tasks
+echo "Step 3: Running remote setup..."
 ssh $DEPLOY_USER@$DEPLOY_HOST << EOF
-    # Load NVM path explicitly for non-interactive shell
-    export PATH="\$PATH:/root/.nvm/versions/node/v24.13.0/bin"
-    
     cd $DEPLOY_PATH
     
-    # Create production .env if it doesn't exist
-    if [ ! -f .env ]; then
-        echo "Creating production .env..."
-        echo "PORT=3001" > .env
-        echo "DB_NAME=database.sqlite" >> .env
-        echo "JWT_SECRET=ids-cyber-secret-999" >> .env
-        echo "ADMIN_USER=admin" >> .env
-        echo "ADMIN_PASS=admin123" >> .env
-        echo "NODE_ENV=production" >> .env
-    fi
-
-    npm install --production
-    # Ensure PM2 is running or start it
-    pm2 delete $PM2_NAME || true
-    pm2 start src/index.js --name $PM2_NAME
-    pm2 save
+    # Install PHP dependencies
+    composer install --no-dev --optimize-autoloader
+    
+    # Run migrations
+    php artisan migrate --force
+    
+    # Ensure storage link exists
+    php artisan storage:link
+    
+    # Clear and cache configuration for performance
+    php artisan config:cache
+    php artisan route:cache
+    php artisan view:cache
+    
+    # Fix permissions (adjust according to your server user, e.g., www-data)
+    # sudo chown -R www-data:www-data storage bootstrap/cache
+    # sudo chmod -R 775 storage bootstrap/cache
 EOF
 
 if [ $? -eq 0 ]; then
-    echo "--- Deployment Successful [SYSTEM_ONLINE] ---"
-    echo "Accessible at: https://initializer.ivandestefani.it"
+    echo "--- Deployment Successful ---"
 else
     echo "Remote setup failed."
     exit 1
