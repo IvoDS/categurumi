@@ -5,24 +5,21 @@ categurumi.ivandestefani.it {
 
     # Security headers
     header {
-        # enable HSTS
         Strict-Transport-Security max-age=31536000;
-        # disable clients from sniffing the media type
         X-Content-Type-Options nosniff
-        # keep referrer information in the same origin
         Referrer-Policy same-origin
     }
 
     # Handle compression
     encode zstd gzip
 
+    # Explicit image caching for the browser (without stripping the path)
+    route /storage/* {
+        header Cache-Control "public, max-age=31536000, immutable"
+    }
+
     # Logging
     log {
         output file /var/log/caddy/categurumi_access.log
-    }
-
-    # Explicit image caching for the browser
-    handle_path /storage/* {
-        header Cache-Control "public, max-age=31536000, immutable"
     }
 }
